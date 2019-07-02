@@ -1,6 +1,8 @@
 DATASETS
+datasets
 ljspeech
 log
+logs
 loss
 params
 samples

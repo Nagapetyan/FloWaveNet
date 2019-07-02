@@ -5,6 +5,7 @@ import os
 import librosa
 from multiprocessing import cpu_count
 import argparse
+import pandas as pd
 
 
 def build_from_path(in_dir, out_dir, num_workers=1):
@@ -19,6 +20,28 @@ def build_from_path(in_dir, out_dir, num_workers=1):
             futures.append(executor.submit(
                 partial(_process_utterance, out_dir, index, wav_path, text)))
             index += 1
+    return [future.result() for future in futures]
+
+
+def build_from_path_rus(in_dir, out_dir, num_workers=1):
+    executor = ProcessPoolExecutor(max_workers=num_workers)
+    futures = []
+    index = 1
+
+    js = pd.read_json(os.path.join(in_dir, 'train.json'))
+    js = js['train']
+
+    for i, line in enumerate(js):
+        text = line['text']
+        wav_path = in_dir+'/'+ line['basename']+ '.wav'
+        futures.append(executor.submit(
+            partial(_process_utterance, out_dir, index, wav_path, text)
+        ))
+        index += 1
+
+    print('-' * 25)
+    print('build_from_path finished')
+    print('-' * 25)
     return [future.result() for future in futures]
 
 
@@ -73,18 +96,17 @@ def _process_utterance(out_dir, index, wav_path, text):
     return audio_filename, mel_filename, timesteps, text
 
 
-def preprocess(in_dir, out_dir, num_workers):
+def preprocess(in_dir, out_dir, num_workers, sr):
     os.makedirs(out_dir, exist_ok=True)
     metadata = build_from_path(in_dir, out_dir, num_workers)
-    write_metadata(metadata, out_dir)
+    write_metadata(metadata, out_dir, sr)
 
 
-def write_metadata(metadata, out_dir):
+def write_metadata(metadata, out_dir, sr):
     with open(os.path.join(out_dir, 'train.txt'), 'w', encoding='utf-8') as f:
         for m in metadata:
             f.write('|'.join([str(x) for x in m]) + '\n')
     frames = sum([m[2] for m in metadata])
-    sr = 22050
     hours = frames / sr / 3600
     print('Wrote %d utterances, %d time steps (%.2f hours)' % (len(metadata), frames, hours))
     print('Max input length:  %d' % max(len(m[3]) for m in metadata))
@@ -96,7 +118,10 @@ if __name__ == "__main__":
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--in_dir', '-i', type=str, default='./', help='In Directory')
     parser.add_argument('--out_dir', '-o', type=str, default='./', help='Out Directory')
+    parser.add_argument('--dataset', type=str, default='lj', help='Dataset type: lj, rus')
+    parser.add_argument('--sample_rate', type=int, default=22050)
+
     args = parser.parse_args()
 
     num_workers = cpu_count()
-    preprocess(args.in_dir, args.out_dir, num_workers)
+    preprocess(args.in_dir, args.out_dir, num_workers, args.dataset, args.sample_rate)

@@ -13,6 +13,8 @@ import time
 import json
 import gc
 
+from logger import Logger
+
 torch.backends.cudnn.benchmark = True
 np.set_printoptions(precision=4)
 torch.manual_seed(1111)
@@ -37,6 +39,8 @@ parser.add_argument('--cin_channels', type=int, default=80, help='Cin Channels')
 parser.add_argument('--block_per_split', type=int, default=4, help='Block per split')
 parser.add_argument('--num_workers', type=int, default=2, help='Number of workers')
 parser.add_argument('--num_gpu', type=int, default=1, help='Number of GPUs to use. >1 uses DataParallel')
+parser.add_argument('--logger', type=str, default='./logs', help='Path for tensorboardX')
+parser.add_argument('--sample_rate', type=int, default=22050, help='Sample rate')
 args = parser.parse_args()
 
 # Init logger
@@ -69,6 +73,13 @@ synth_loader = DataLoader(test_dataset, batch_size=1, collate_fn=collate_fn_synt
                           num_workers=args.num_workers, pin_memory=True)
 
 
+def prepare_logger(path):
+    if not os.path.isdir(path):
+        os.makedirs(path)
+    logger = Logger(path)
+    return logger
+
+
 def build_model():
     pretrained = True if args.load_step > 0 else False
     model = Flowavenet(in_channel=1,
@@ -89,6 +100,8 @@ def train(epoch, model, optimizer, scheduler):
     model.train()
     display_step = 100
     for batch_idx, (x, c) in enumerate(train_loader):
+        #if batch_idx > 1:
+        #    break
         scheduler.step()
         global_step += 1
 
@@ -126,6 +139,8 @@ def evaluate(model):
     epoch_loss = 0.
     display_step = 100
     for batch_idx, (x, c) in enumerate(test_loader):
+        #if batch_idx > 1:
+        #    break
         x, c = x.to(device), c.to(device)
         log_p, logdet = model(x, c)
         log_p, logdet = torch.mean(log_p), torch.mean(logdet)
@@ -164,11 +179,13 @@ def synthesize(model):
                 else:
                     y_gen = model.module.reverse(z, c).squeeze()
             wav = y_gen.to(torch.device("cpu")).data.numpy()
-            wav_name = '{}/{}/generate_{}_{}.wav'.format(args.sample_path, args.model_name, global_step, batch_idx)
-            print('{} seconds'.format(time.time() - start_time))
-            librosa.output.write_wav(wav_name, wav, sr=22050)
-            print('{} Saved!'.format(wav_name))
-            del x, c, z, q_0, y_gen, wav
+            #wav_name = '{}/{}/generate_{}_{}.wav'.format(args.sample_path, args.model_name, global_step, batch_idx)
+            #print('{} seconds'.format(time.time() - start_time))
+            #librosa.output.write_wav(wav_name, wav, sr=22050)
+            #print('{} Saved!'.format(wav_name))
+            del x, c, z, q_0, y_gen#, wav
+
+            return wav
 
 
 def save_checkpoint(model, optimizer, scheduler, global_step, global_epoch):
@@ -216,6 +233,8 @@ if __name__ == "__main__":
     model = build_model()
     model.to(device)
 
+    logger = prepare_logger(args.logger)
+
     pretrained = True if args.load_step > 0 else False
     if pretrained is False:
         # do ActNorm initialization first (if model.pretrained is True, this does nothing so no worries)
@@ -254,13 +273,21 @@ if __name__ == "__main__":
         model = torch.nn.DataParallel(model)
 
     for epoch in range(global_epoch + 1, args.epochs + 1):
+        print('-' * 25)
+        print('EPOCH#{}'.format(epoch))
+        print('-' * 25)
         training_epoch_loss = train(epoch, model, optimizer, scheduler)
         with torch.no_grad():
             test_epoch_loss = evaluate(model)
+            audio = synthesize(model)
 
-        state['training_loss'] = training_epoch_loss
-        state['eval_loss'] = test_epoch_loss
-        state['epoch'] = epoch
+        logger.write_train(training_epoch_loss, epoch)
+        logger.write_val(test_epoch_loss, audio, args.sample_rate, epoch)
+        del audio
+
+        #state['training_loss'] = training_epoch_loss
+        #state['eval_loss'] = test_epoch_loss
+        #state['epoch'] = epoch
         list_train_loss.append(training_epoch_loss)
         list_loss.append(test_epoch_loss)
 
@@ -273,9 +300,9 @@ if __name__ == "__main__":
         np.save('{}/{}_train.npy'.format(args.loss, args.model_name), list_train_loss)
         np.save('{}/{}.npy'.format(args.loss, args.model_name), list_loss)
 
-        log.write('%s\n' % json.dumps(state))
-        log.flush()
-        print(state)
+        #log.write('%s\n' % json.dumps(state))
+        #log.flush()
+        #print(state)
         gc.collect()
 
     log.close()
