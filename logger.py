@@ -13,8 +13,10 @@ class Logger(SummaryWriter):
     def write_train(self, training_loss, iteration):
         self.add_scalar('training loss', training_loss, iteration)
 
-    def write_val(self, validation_loss, audio, sample_rate, iteration):
+    def write_val(self, validation_loss, iteration):
         self.add_scalar('validation loss', validation_loss, iteration)
+
+    def write_audio(self, audio, sample_rate, iteration):
         self.add_audio('sample', audio, iteration, sample_rate)
 
         np.save(self.logger_dir + '/sample{}'.format(iteration), audio)

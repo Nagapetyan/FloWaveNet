@@ -6,6 +6,7 @@ import librosa
 from multiprocessing import cpu_count
 import argparse
 import pandas as pd
+import audio
 
 
 def build_from_path(in_dir, out_dir, num_workers=1):
@@ -23,7 +24,7 @@ def build_from_path(in_dir, out_dir, num_workers=1):
     return [future.result() for future in futures]
 
 
-def build_from_path_rus(in_dir, out_dir, num_workers=1):
+def build_from_path_rus(in_dir, out_dir, num_workers=1, sr=22050):
     executor = ProcessPoolExecutor(max_workers=num_workers)
     futures = []
     index = 1
@@ -35,7 +36,7 @@ def build_from_path_rus(in_dir, out_dir, num_workers=1):
         text = line['text']
         wav_path = in_dir+'/'+ line['basename']+ '.wav'
         futures.append(executor.submit(
-            partial(_process_utterance, out_dir, index, wav_path, text)
+            partial(_process_utterance, out_dir, index, wav_path, text, sr)
         ))
         index += 1
 
@@ -45,18 +46,20 @@ def build_from_path_rus(in_dir, out_dir, num_workers=1):
     return [future.result() for future in futures]
 
 
-def _process_utterance(out_dir, index, wav_path, text):
+def _process_utterance(out_dir, index, wav_path, text, sr):
     # Load the audio to a numpy array:
-    wav, sr = librosa.load(wav_path, sr=22050)
+    wav, sr = librosa.load(wav_path, sr=sr)
 
     wav = wav / np.abs(wav).max() * 0.999
     out = wav
-    constant_values = 0.0
+
     out_dtype = np.float32
-    n_fft = 1024
-    hop_length = 256
-    reference = 20.0
-    min_db = -100
+
+    constant_values = audio.constant_values
+    n_fft = audio.n_fft
+    hop_length = audio.hop_length
+    reference = audio.reference
+    min_db = audio.min_db
 
     # Compute a mel-scale spectrogram from the trimmed wav:
     # (N, D)
@@ -96,10 +99,14 @@ def _process_utterance(out_dir, index, wav_path, text):
     return audio_filename, mel_filename, timesteps, text
 
 
-def preprocess(in_dir, out_dir, num_workers, sr):
+
+def preprocess(in_dir, out_dir, num_workers, dataset_name, sr):
     os.makedirs(out_dir, exist_ok=True)
-    metadata = build_from_path(in_dir, out_dir, num_workers)
-    write_metadata(metadata, out_dir, sr)
+    if dataset_name == 'lj':
+        metadata = build_from_path(in_dir, out_dir, num_workers)
+    else:
+        metadata = build_from_path_rus(in_dir, out_dir, num_workers, sr)
+    write_metadata(metadata[:-1], out_dir, sr)
 
 
 def write_metadata(metadata, out_dir, sr):
@@ -124,4 +131,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     num_workers = cpu_count()
-    preprocess(args.in_dir, args.out_dir, num_workers, args.dataset, args.sample_rate)
+    preprocess(args.in_dir, args.out_dir, num_workers, args.dataset, args.dataset, args.sample_rate)

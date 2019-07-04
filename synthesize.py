@@ -27,6 +27,7 @@ parser.add_argument('--cin_channels', type=int, default=80, help='Cin Channels')
 parser.add_argument('--block_per_split', type=int, default=4, help='Block per split')
 parser.add_argument('--num_workers', type=int, default=0, help='Number of workers')
 parser.add_argument('--log', type=str, default='./log', help='Log folder.')
+parser.add_argument('--hop_size', type=int, default=256, help='Hop size')
 args = parser.parse_args()
 
 if not os.path.isdir(args.sample_path):
@@ -61,7 +62,9 @@ def synthesize(model):
         if batch_idx < args.num_samples:
             x, c = x.to(device), c.to(device)
 
-            q_0 = Normal(x.new_zeros(x.size()), x.new_ones(x.size()))
+            length = args.hop_size * c.size()[-1]
+            sample_size = (1, 1, length)
+            q_0 = Normal(sample_size, sample_size)
             z = q_0.sample() * args.temp
             torch.cuda.synchronize()
             start_time = time.time()

@@ -13,6 +13,8 @@ import time
 import json
 import gc
 
+from tqdm import tqdm
+
 from logger import Logger
 
 torch.backends.cudnn.benchmark = True
@@ -41,6 +43,7 @@ parser.add_argument('--num_workers', type=int, default=2, help='Number of worker
 parser.add_argument('--num_gpu', type=int, default=1, help='Number of GPUs to use. >1 uses DataParallel')
 parser.add_argument('--logger', type=str, default='./logs', help='Path for tensorboardX')
 parser.add_argument('--sample_rate', type=int, default=22050, help='Sample rate')
+parser.add_argument('--hop_size', type=int, default=256, help='Hop size')
 args = parser.parse_args()
 
 # Init logger
@@ -100,8 +103,8 @@ def train(epoch, model, optimizer, scheduler):
     model.train()
     display_step = 100
     for batch_idx, (x, c) in enumerate(train_loader):
-        #if batch_idx > 1:
-        #    break
+        if batch_idx > 1:
+            break
         scheduler.step()
         global_step += 1
 
@@ -139,8 +142,8 @@ def evaluate(model):
     epoch_loss = 0.
     display_step = 100
     for batch_idx, (x, c) in enumerate(test_loader):
-        #if batch_idx > 1:
-        #    break
+        if batch_idx > 1:
+            break
         x, c = x.to(device), c.to(device)
         log_p, logdet = model(x, c)
         log_p, logdet = torch.mean(log_p), torch.mean(logdet)
@@ -169,7 +172,9 @@ def synthesize(model):
         if batch_idx == 0:
             x, c = x.to(device), c.to(device)
 
-            q_0 = Normal(x.new_zeros(x.size()), x.new_ones(x.size()))
+            length = args.hop_size * c.size()[-1]
+            sample_size = (1, 1, length)
+            q_0 = Normal(sample_size, sample_size)
             z = q_0.sample()
 
             start_time = time.time()
@@ -179,11 +184,7 @@ def synthesize(model):
                 else:
                     y_gen = model.module.reverse(z, c).squeeze()
             wav = y_gen.to(torch.device("cpu")).data.numpy()
-            #wav_name = '{}/{}/generate_{}_{}.wav'.format(args.sample_path, args.model_name, global_step, batch_idx)
-            #print('{} seconds'.format(time.time() - start_time))
-            #librosa.output.write_wav(wav_name, wav, sr=22050)
-            #print('{} Saved!'.format(wav_name))
-            del x, c, z, q_0, y_gen#, wav
+            del x, c, z, q_0, y_gen
 
             return wav
 
@@ -272,37 +273,35 @@ if __name__ == "__main__":
         print("num_gpu > 1 detected. converting the model to DataParallel...")
         model = torch.nn.DataParallel(model)
 
-    for epoch in range(global_epoch + 1, args.epochs + 1):
-        print('-' * 25)
-        print('EPOCH#{}'.format(epoch))
-        print('-' * 25)
+    for epoch in tqdm(range(global_epoch + 1, args.epochs + 1)):
+        #print('-' * 25)
+        #print('EPOCH#{}'.format(epoch))
+        #print('-' * 25)
         training_epoch_loss = train(epoch, model, optimizer, scheduler)
         with torch.no_grad():
             test_epoch_loss = evaluate(model)
-            audio = synthesize(model)
+
+        if epoch % 50 == 0:
+            with torch.no_grad():
+                audio = synthesize(model)
+                logger.write_audio(audio, args.sample_rate, epoch)
+                del audio
 
         logger.write_train(training_epoch_loss, epoch)
-        logger.write_val(test_epoch_loss, audio, args.sample_rate, epoch)
-        del audio
+        logger.write_val(test_epoch_loss, epoch)
 
-        #state['training_loss'] = training_epoch_loss
-        #state['eval_loss'] = test_epoch_loss
-        #state['epoch'] = epoch
         list_train_loss.append(training_epoch_loss)
         list_loss.append(test_epoch_loss)
 
         if test_loss > test_epoch_loss:
             test_loss = test_epoch_loss
             save_checkpoint(model, optimizer, scheduler, global_step, epoch)
-            print('Epoch {} Model Saved! Loss : {:.4f}'.format(epoch, test_loss))
-            with torch.no_grad():
-                synthesize(model)
+            #print('Epoch {} Model Saved! Loss : {:.4f}'.format(epoch, test_loss))
+            #with torch.no_grad():
+            #    audio = synthesize(model)
         np.save('{}/{}_train.npy'.format(args.loss, args.model_name), list_train_loss)
         np.save('{}/{}.npy'.format(args.loss, args.model_name), list_loss)
 
-        #log.write('%s\n' % json.dumps(state))
-        #log.flush()
-        #print(state)
         gc.collect()
 
     log.close()
