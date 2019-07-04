@@ -103,8 +103,8 @@ def train(epoch, model, optimizer, scheduler):
     model.train()
     display_step = 100
     for batch_idx, (x, c) in enumerate(train_loader):
-        if batch_idx > 1:
-            break
+        #if batch_idx > 1:
+        #    break
         scheduler.step()
         global_step += 1
 
@@ -142,8 +142,8 @@ def evaluate(model):
     epoch_loss = 0.
     display_step = 100
     for batch_idx, (x, c) in enumerate(test_loader):
-        if batch_idx > 1:
-            break
+        #if batch_idx > 1:
+        #    break
         x, c = x.to(device), c.to(device)
         log_p, logdet = model(x, c)
         log_p, logdet = torch.mean(log_p), torch.mean(logdet)
